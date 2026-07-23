@@ -1,0 +1,12 @@
+# Raw data files (large, not version-controlled)
+data/raw/
+
+# Claude Code local settings (machine-specific permission allow-list)
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
