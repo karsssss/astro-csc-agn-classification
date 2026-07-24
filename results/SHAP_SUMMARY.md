@@ -1,0 +1,66 @@
+# SHAP Summary -- UMAP + HDBSCAN + LightGBM + SHAP, Diagnostic History and v_final
+
+## Reproducibility
+
+- **HDBSCAN config selected:** `mcs_20_ms_5_leaf` -- `min_cluster_size=20`, `min_samples=5`, `cluster_selection_method="leaf"`, `metric="euclidean"`, `core_dist_n_jobs=-1`.
+- **Seeds:** `StandardScaler` (no seed; deterministic). UMAP: `n_neighbors=15, min_dist=0.1, n_components=2, metric="euclidean", random_state=42`. `silhouette_score`: `sample_size=min(10_000, n_valid), random_state=42`. `train_test_split`: `test_size=0.25, random_state=42`, stratified on cluster label. `LGBMClassifier`: `random_state=42, objective="multiclass", class_weight="balanced"`. `TreeExplainer` sample: `X_test.sample(n=min(5000, len(X_test)), random_state=42)`.
+- **Row count:** 25,801 (of 27,537 in the sentinel-corrected pre-filter population).
+- **Final feature column count:** 22.
+- A reviewer should be able to reconstruct every number below from these facts plus `src/conversions.py::build_feature_matrix`, `src/clustering.py`, and `src/interpretation.py` (see the restructure note at the bottom of this file).
+- **Reproduction:** a fresh execution of `analysis.ipynb` from the `src/` modules reproduces the v_final result at every scientifically meaningful level. Row count (25,801), final feature column count (22), HDBSCAN config selection (`mcs_20_ms_5_leaf`), cluster count (7 real + noise), silhouette (0.4326 vs. v_final's 0.432), and Cluster 1 (n=136, 58.8% AGN, 27.2% non-AGN, driven by `optical_r_over_w1` and `color_w1_over_w2`) all match. A 1-source drift is observed between noise (12,995 reproduced vs. 12,996 v_final) and Cluster 4 (86 reproduced vs. 85 v_final), root cause unidentified; `core_dist_n_jobs` parallelism was tested at both settings and produces identical results, so that is ruled out as the cause. Top-4 global SHAP features (`optical_r_over_w1`, `color_g_over_r`, `color_r_over_z`, `xray_b_over_r`) are unchanged in rank and value to within ~0.008. Candidates for the 1-row drift include subtle differences between the original inline v_final code and the `build_feature_matrix` module, or execution differences between the original `nbclient` exploration and a bare Python run; neither has been root-caused.
+
+## Diagnostic history (v1 -> v3)
+
+v1 (flux-converted `log_flux_*` features from the notebook's existing Reduced Case columns) collapsed to 2 clusters dominated by absolute IR/optical brightness (`log_flux_WISE_w1mpro`, `combo_log_flux_z`). v2 (81 candidate brightness-normalized ratio/color/hardness/variability columns, complete-case dropna) removed the brightness dominance but complete-case filtering across that many ratio columns collapsed the sample 27,537 -> 1,731 rows (94% loss, driven mainly by rare Gaia x-ray cross-matches), and a single `xray_ratio_*_GAIA21P_g` pair took over as the new dominant feature. v3 (same v2 columns, column-drop + row-coverage-filter + median-impute instead of dropna) recovered 22,357 rows but its HDBSCAN grid timed out before a verdict was reached; it was abandoned in favor of a from-scratch rebuild once the row-completeness diagnosis was clear (see below). Full numeric detail for v1 and v2 is preserved in the "Superseded" section at the bottom of this file.
+
+## v_final: the main result
+
+**Approach.** Starting strictly from the notebook's own definitive 25-column "Reduced Case" set (13 X-ray aperture-flux columns, `combo_g`/`combo_r`/`combo_z_mag`, 6 WISE columns, `hard_hs`+errors) -- not the larger, more failure-prone candidate lists v2/v3 explored -- optical and WISE magnitudes were converted to flux (AB/Vega zero points via `mag_to_flux_jy`), and a small, deliberately restrained set of ratios and colors was built: broad- and medium-band X-ray-to-multiwavelength ratios (`xray_b_over_r`, `xray_b_over_w1`, `xray_b_over_w2`, `xray_m_over_r`, `optical_r_over_w1`) and four WISE/optical colors. **Soft- and hard-band X-ray ratios were deliberately excluded**, even though they're the most "obvious" ratios to build: requiring `flux_aper_s`/`flux_aper_h` to be strictly positive (not just non-null) discards 14.29%/8.70% of the pre-filter population respectively -- a real, legitimate per-band non-detection, but one that would have reintroduced exactly the brightness/detection selection effect this whole exercise was trying to remove. Hard/soft spectral shape is instead carried by `hard_hs`, and -- since they clear an 85%-coverage bar at negligible additional row cost (25,801 vs 25,803 rows) -- `hard_hm` and `hard_ms` were added too, giving three hardness ratios total (closer to Kumaran/Yang/Perez-Diaz's convention of using multiple hardness ratios rather than one).
+
+**Final column list (22):** `significance`, `WISE_w1snr`, `WISE_w2snr`, `WISE_w3snr`, `hard_hs` (+`lolim`/`hilim`), `hard_hm` (+`lolim`/`hilim`), `hard_ms` (+`lolim`/`hilim`), `xray_b_over_r`, `xray_b_over_w1`, `xray_b_over_w2`, `xray_m_over_r`, `optical_r_over_w1`, `color_g_over_r`, `color_r_over_z`, `color_w1_over_w2`, `color_w2_over_w3`. Zero raw single-band flux/magnitude columns (asserted programmatically). **25,801 rows survive** -- 93.7% of the 27,537-row sentinel-corrected pre-filter population, and comparable in scale to Perez-Diaz (2024)'s working sample.
+
+**HDBSCAN grid.** All 3 `min_cluster_size` values (20/30/50) are irrelevant on their own -- the only thing that matters is `cluster_selection_method`: every `eom` config gives the same 2-cluster, 6.5%-noise, silhouette-0.338 result, and every `leaf` config gives the same 7-cluster, 50.4%-noise, silhouette-0.432 result. **`mcs_20_ms_5_leaf` was selected** (arbitrarily, among the 3 identical `leaf` configs) because it's the only family reaching the >=4-real-cluster target.
+
+**Cluster composition** (n_members, %AGN [silver+confirmed], %non-AGN, %unlabeled):
+
+| Cluster | n | %AGN | %non-AGN | %unlabeled |
+|---|---:|---:|---:|---:|
+| -1 (noise) | 12,996 | 66.1 | 4.5 | 29.5 |
+| 0 | 54 | 72.2 | 1.9 | 25.9 |
+| 1 | 136 | 58.8 | **27.2** | 14.0 |
+| 2 | 54 | 66.7 | 9.3 | 24.1 |
+| 3 | 12,284 | 89.6 | 1.8 | 8.6 |
+| 4 | 85 | 14.1 | 0.0 | 85.9 |
+| 5 | 94 | 41.5 | 0.0 | 58.5 |
+| 6 | 98 | 34.7 | 0.0 | 65.3 |
+
+**Top 15 global SHAP features:** `optical_r_over_w1` (0.155), `color_g_over_r` (0.089), `color_r_over_z` (0.081), `xray_b_over_r` (0.064), `significance` (0.053), `WISE_w1snr` (0.050), `color_w1_over_w2` (0.039), `xray_b_over_w1` (0.039), `color_w2_over_w3` (0.034), `xray_b_over_w2` (0.028), `hard_ms_hilim` (0.019), `xray_m_over_r` (0.017), `WISE_w3snr` (0.015), `hard_hs` (0.015), `WISE_w2snr` (0.015). **No SNR/error-bar column ranks in the top 5** -- the top 5 are all physical ratios/colors/significance, a materially different (and flatter -- top feature is only ~1.7x the #2 feature, vs. 5-15x in v1/v2) distribution than every prior version.
+
+**Balanced accuracy: 0.982** (not 1.00) -- with 7 real classes of wildly different sizes (12,284 down to 54), this is a more informative number than v1/v2's trivial 1.00, though the same definitional caveat still applies in part: the classifier is trained on the same 22-column feature matrix that UMAP/HDBSCAN derived the labels from.
+
+## Honest astrophysical interpretation, per cluster
+
+- **Cluster 3 (n=12,284, 47.6% of the sample, 89.6% AGN-labeled):** by far the dominant cluster. Its own top feature is `WISE_w1snr` (0.303) -- **a data-quality/SNR proxy, not a physical ratio** -- ahead of `xray_b_over_w1` (0.216) and `xray_b_over_r` (0.177). This doesn't show up in the *global* top-5 SHAP check (which passes) because it's diluted by averaging across all 7 classes, but it means the single largest cluster is partly separated by "how well-detected in WISE W1" rather than purely spectral shape. Worth being explicit about even though it doesn't trip the instructed global-top-5 flag.
+- **Cluster 1 (n=136, 58.8% AGN, 27.2% non-AGN -- the highest non-AGN concentration of any cluster):** driven overwhelmingly by `optical_r_over_w1` (0.476) and `color_w1_over_w2` (0.123), both genuinely physical (optical-to-IR SED shape, a classic AGN-vs-galaxy discriminator since AGN tori reprocess more IR flux relative to optical than normal galaxies). This is the closest thing in any version of this analysis to a real, physically-motivated, partially non-AGN-enriched cluster -- small, but not a data-quality artifact. This is the scientifically most interesting cluster in the analysis: small (n=136), but the highest confirmed non-AGN concentration of any cluster, driven by physically motivated optical/IR SED features rather than a brightness or SNR proxy -- a reasonable candidate for follow-up spectroscopic confirmation.
+- **Cluster 0 (n=54) and Cluster 6 (n=98):** both driven by `color_g_over_r`/`color_r_over_z` (optical color), likely a related but distinct region of optical color space from cluster 1.
+- **Cluster 2 (n=54):** driven by `xray_b_over_r`, `xray_m_over_r`, and `hard_ms` -- the one cluster where X-ray-to-optical ratio and medium-band hardness dominate over IR/optical colors.
+- **Clusters 4 (n=85) and 5 (n=94):** both mostly *unlabeled* (85.9% and 58.5%) with low AGN fractions (14.1%, 41.5%) and zero confirmed non-AGN. Cluster 4 is driven by `hard_hm`/`hard_hs` (genuine hardness); cluster 5 by `optical_r_over_w1` and `significance`. These may represent an astrophysical population not well covered by the existing gold/silver AGN labels (candidates: X-ray binaries, stars, or simply low-significance/ambiguous sources) rather than "clustering failure" -- but with n<100 and no ground truth to check against, this is speculative, not confirmed.
+- **Noise (n=12,996, 50.4% of the sample):** HDBSCAN's `leaf` selection method achieves 7 clusters partly by aggressively calling half the sample noise. The noise pool's own label composition (66.1% AGN) is unremarkable relative to the clusters -- it isn't a discovered population, it's what's left over.
+
+## Bottom line
+
+**This is a partially physics-driven result, with one clear caveat.** Compared to v1 (single brightness feature dominating everything) and v2 (single Gaia-ratio dominating a collapsed sample), v_final's global SHAP importance is flatter, its top-5 features are physical (colors, X-ray/optical ratio, significance), and it reaches real, differentiated structure (>=4 clusters, non-mirror-image per-cluster SHAP profiles, one small cluster -- Cluster 1 -- with a genuinely elevated non-AGN fraction driven by a physically-motivated optical/IR ratio). That said: (1) the dominant cluster (Cluster 3, 47.6% of the sample) leans on a WISE SNR proxy as its top individual driver, even though this doesn't surface in the global top-5; (2) cluster sizes are extremely imbalanced (one cluster of 12,284 plus six clusters of 54-136, plus 50.4% noise) -- this reads as "one big blob, a large noise pool, and several small distinct outlier groups," not seven comparably-sized populations; (3) the HDBSCAN grid is entirely insensitive to `min_cluster_size` in the tested range and depends entirely on `eom` vs. `leaf`, which is a fairly blunt lever to be resting a >=4-cluster conclusion on.
+
+**What this says about the CSC Reduced Case:** a genuinely richer clustering structure than 2 blobs *is* recoverable from these 25 base columns once brightness/detection-selection effects are properly removed from the feature ratios (not just from the labels) -- the earlier "brightness-normalized clustering doesn't resolve more than 2 groups" hypothesis from the v2/v3 diagnostic phase does **not** hold once soft/hard-band selection bias is also removed from the ratio construction itself, not just from the raw flux columns. Reaching Perez-Diaz (2024)'s 6-cluster resolution with comparably-sized, physically distinct populations (rather than 1 dominant blob + small outlier groups + heavy noise) likely still requires either per-detection variability features not present in this Reduced Case, or further HDBSCAN/UMAP hyperparameter work beyond the 6-config grid tested here -- but the core finding is that this feature-engineering approach (physically-motivated ratios, explicit exclusion of selection-biased ratios) is sound and worth carrying into the `src/` restructure, not a dead end.
+
+---
+
+## Superseded: v1 and v2 full detail
+
+### v1 (flux-based, brightness-dominated)
+
+27,537 rows, 24 columns (`log_flux_*` WISE/PS1/Legacy + X-ray aperture fluxes + hardness + SNR), HDBSCAN config `mcs_50_ms_5`: 2 clusters, 35.8% noise. Dominant features: `log_flux_WISE_w1mpro` (~1.18), `combo_log_flux_z` (~0.75), 5-15x every other feature. Cluster 0 (n=2,211): 28.6% AGN-labeled. Cluster 1 (n=15,467): 82.5% AGN-labeled. Confirmed non-AGN sat at ~3.2-3.6% in both clusters and in noise.
+
+### v2 (brightness-normalized, complete-case dropna)
+
+69 columns (hardness, colors, `xray_ratio_*`, variability, SNR; zero raw flux confirmed), complete-case dropna collapsed 27,537 -> 1,731 rows. HDBSCAN grid (`min_cluster_size` in [20,30,50] x `eom`/`leaf`) gave byte-identical results across all 6 configs: 2 clusters, 12.8% noise, silhouette 0.538 -- the >=4-cluster target was not met. Dominant features: `xray_ratio_b_GAIA21P_g` (~0.27), `xray_ratio_h_GAIA21P_g` (~0.24), driven by a rare Gaia x-ray cross-match acting as a near-total AGN selector (Cluster 0, n=1,438: 97.8% AGN-labeled; confirmed non-AGN 0-4.1% everywhere).
