@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 import hdbscan
+import pacmap
 import umap
 from sklearn.metrics import silhouette_score
 
@@ -31,6 +32,18 @@ def fit_umap(X_scaled, n_neighbors=15, min_dist=0.1, n_components=2, random_stat
         metric="euclidean",
         random_state=random_state,
         low_memory=True,
+    )
+    return reducer.fit_transform(X_scaled)
+
+
+def fit_pacmap(X_scaled, n_neighbors=15, n_components=2, random_state=42):
+    """Fit PaCMAP and return the 2D (by default) embedding array. For comparison
+    against fit_umap on the same scaled feature matrix -- see
+    results/SHAP_SUMMARY.md and notebooks/analysis.ipynb's UMAP-vs-PaCMAP cells."""
+    reducer = pacmap.PaCMAP(
+        n_components=n_components,
+        n_neighbors=n_neighbors,
+        random_state=random_state,
     )
     return reducer.fit_transform(X_scaled)
 
