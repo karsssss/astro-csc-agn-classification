@@ -210,3 +210,143 @@ def build_feature_matrix(df):
     assert not leaked, f"raw flux/magnitude columns leaked into feature matrix: {leaked}"
 
     return df_sample, X
+
+
+# The two variability columns that clear an 80% coverage bar on the v_final
+# 25,801-row sample -- see results/EXTENDED_FEATURES_COMPARISON.md "Step 1".
+# Both are intra-observation variability indices; the inter-observation
+# columns (var_inter_index_*, var_inter_hard_prob/sigma_*) only cover 20-35%
+# and are excluded for that reason, not because they're less physically
+# relevant.
+DEFAULT_VARIABILITY_COLS = ["var_intra_index_b", "var_intra_index_m"]
+
+# X-ray aperture bands to add as log10(flux) columns when include_fluxes=True.
+# Deliberately b/m only, NOT h/s -- matching build_feature_matrix's own
+# soft/hard-band exclusion rationale (requiring flux_aper_s/flux_aper_h to be
+# strictly positive discards real non-detections and reintroduces a
+# brightness/detection selection effect). Empirically confirmed here too:
+# a first attempt at including all 4 bands dropped row count from 23,327 to
+# 19,259 (below the 20,000 floor), with log_flux_aper_s (88.5% coverage) and
+# log_flux_aper_h (93.4%) the two worst offenders -- see
+# results/EXTENDED_FEATURES_COMPARISON.md "Step 2".
+DEFAULT_LOG_FLUX_XRAY_BANDS = ["b", "m"]
+
+
+def build_feature_matrix_with_fluxes_and_variability(
+    df, include_fluxes=True, include_variability=True,
+    variability_cols=DEFAULT_VARIABILITY_COLS,
+    log_flux_xray_bands=DEFAULT_LOG_FLUX_XRAY_BANDS, minimum_rows=20_000,
+):
+    """Extended v_final variant for a specific robustness check -- NOT the
+    canonical feature matrix (see build_feature_matrix, unmodified, for
+    that). Tests two methodological choices from
+    results/EXTENDED_FEATURES_COMPARISON.md: (1) whether dropping raw
+    flux/magnitude columns after computing ratios was necessary, and (2)
+    whether X-ray variability features resolve v_final's mostly-unlabeled
+    small clusters.
+
+    Same 25 raw Reduced Case columns, same mag->flux conversion, and the
+    same ratios/colors as build_feature_matrix, but additionally includes:
+    - include_fluxes: log10(flux) for the X-ray aperture bands in
+      log_flux_xray_bands (default b/m only -- see
+      DEFAULT_LOG_FLUX_XRAY_BANDS for why h/s are excluded) and the 6
+      converted optical/WISE fluxes (combo_g/r/z, WISE w1/w2/w3),
+      non-positive -> NaN before the log10 (same convention as _log_ratio).
+      Column names are prefixed log_flux_* (not flux_*) so they don't match
+      _RAW_FLUX_LEAK_PATTERN -- this function's whole point is to test
+      keeping them, unlike build_feature_matrix.
+    - include_variability: the columns in variability_cols (default:
+      DEFAULT_VARIABILITY_COLS).
+
+    Raises ValueError if the final row count drops below minimum_rows,
+    reporting per-added-column coverage so the caller can identify which
+    column is responsible rather than silently proceeding on a collapsed
+    sample.
+    """
+    missing = [c for c in DEFINITIVE_REDUCED_CASE_COLS if c not in df.columns]
+    if missing:
+        raise KeyError(f"build_feature_matrix_with_fluxes_and_variability requires these columns first: {missing}")
+    if include_variability:
+        missing_var = [c for c in variability_cols if c not in df.columns]
+        if missing_var:
+            raise KeyError(f"variability_cols not present in df: {missing_var}")
+
+    dropna_cols = list(DEFINITIVE_REDUCED_CASE_COLS)
+    if include_variability:
+        dropna_cols += list(variability_cols)
+
+    df_sample = df.dropna(subset=dropna_cols).copy()
+
+    df_sample = apply_mag_to_flux(df_sample, {
+        "combo_g": ZERO_POINT_JY["PS21P_g"],
+        "combo_r": ZERO_POINT_JY["PS21P_r"],
+        "combo_z_mag": ZERO_POINT_JY["PS21P_z"],
+        "WISE_w1mpro": ZERO_POINT_JY["WISE_w1mpro"],
+        "WISE_w2mpro": ZERO_POINT_JY["WISE_w2mpro"],
+        "WISE_w3mpro": ZERO_POINT_JY["WISE_w3mpro"],
+    }, flux_col_template="flux_{col}")
+    df_sample = df_sample.rename(columns={
+        "flux_WISE_w1mpro": "flux_wise_w1",
+        "flux_WISE_w2mpro": "flux_wise_w2",
+        "flux_WISE_w3mpro": "flux_wise_w3",
+        "flux_combo_z_mag": "flux_combo_z",
+    })
+
+    df_sample["xray_b_over_r"] = _log_ratio(df_sample["flux_aper_b"], df_sample["flux_combo_r"])
+    df_sample["xray_b_over_w1"] = _log_ratio(df_sample["flux_aper_b"], df_sample["flux_wise_w1"])
+    df_sample["xray_b_over_w2"] = _log_ratio(df_sample["flux_aper_b"], df_sample["flux_wise_w2"])
+    df_sample["xray_m_over_r"] = _log_ratio(df_sample["flux_aper_m"], df_sample["flux_combo_r"])
+    df_sample["optical_r_over_w1"] = _log_ratio(df_sample["flux_combo_r"], df_sample["flux_wise_w1"])
+
+    df_sample["color_g_over_r"] = _log_ratio(df_sample["flux_combo_g"], df_sample["flux_combo_r"])
+    df_sample["color_r_over_z"] = _log_ratio(df_sample["flux_combo_r"], df_sample["flux_combo_z"])
+    df_sample["color_w1_over_w2"] = _log_ratio(df_sample["flux_wise_w1"], df_sample["flux_wise_w2"])
+    df_sample["color_w2_over_w3"] = _log_ratio(df_sample["flux_wise_w2"], df_sample["flux_wise_w3"])
+
+    extra_cols = []
+    if include_fluxes:
+        for band in log_flux_xray_bands:
+            col = f"log_flux_aper_{band}"
+            df_sample[col] = np.log10(df_sample[f"flux_aper_{band}"].where(df_sample[f"flux_aper_{band}"] > 0))
+            extra_cols.append(col)
+        for name, flux_col in [
+            ("combo_g", "flux_combo_g"), ("combo_r", "flux_combo_r"), ("combo_z", "flux_combo_z"),
+            ("wise_w1", "flux_wise_w1"), ("wise_w2", "flux_wise_w2"), ("wise_w3", "flux_wise_w3"),
+        ]:
+            col = f"log_flux_{name}"
+            df_sample[col] = np.log10(df_sample[flux_col].where(df_sample[flux_col] > 0))
+            extra_cols.append(col)
+    if include_variability:
+        extra_cols += list(variability_cols)
+
+    final_cols = [
+        "significance", "WISE_w1snr", "WISE_w2snr", "WISE_w3snr",
+        "hard_hs", "hard_hs_lolim", "hard_hs_hilim",
+        "hard_hm", "hard_hm_lolim", "hard_hm_hilim",
+        "hard_ms", "hard_ms_lolim", "hard_ms_hilim",
+        "xray_b_over_r", "xray_b_over_w1", "xray_b_over_w2", "xray_m_over_r",
+        "optical_r_over_w1",
+        "color_g_over_r", "color_r_over_z", "color_w1_over_w2", "color_w2_over_w3",
+    ] + extra_cols
+    missing_final = [c for c in final_cols if c not in df_sample.columns]
+    if missing_final:
+        raise KeyError(f"final_cols references columns not present: {missing_final}")
+
+    pre_dropna_n = len(df_sample)
+    pre_dropna_df = df_sample
+    df_sample = df_sample.dropna(subset=final_cols)
+
+    if len(df_sample) < minimum_rows:
+        coverage = {c: pre_dropna_df[c].notna().mean() for c in extra_cols}
+        coverage_str = ", ".join(f"{c}={v:.1%}" for c, v in sorted(coverage.items(), key=lambda kv: kv[1]))
+        raise ValueError(
+            f"Row count {len(df_sample)} < minimum_rows={minimum_rows} "
+            f"(started from {pre_dropna_n} rows before final dropna). "
+            f"Per-added-column coverage on the pre-dropna frame: {coverage_str}"
+        )
+
+    X = df_sample[final_cols].copy()
+    leaked = [c for c in X.columns if _RAW_FLUX_LEAK_PATTERN.match(c)]
+    assert not leaked, f"raw flux/magnitude columns leaked into feature matrix: {leaked}"
+
+    return df_sample, X
