@@ -7,6 +7,53 @@ dropped, and why.
 Entries are in reverse chronological order (newest at top). Undated context
 and conventions live in this header.
 
+## 2026-08-04 — Redshift-coded UMAP plots, Variant B (32-feat) addendum
+
+Additive follow-up to the Variant A redshift plots below: the same two
+figure types (gold-only colored by `combo_Z`, AGN-only with size+color
+both encoding `combo_Z`) rebuilt for the Variant B (32-feat) feature
+space, with UMAP parameters held fixed (`n_neighbors=15, min_dist=0.1,
+n_components=2, random_state=42`) so the feature space is the only thing
+that varies. Added as two extra sections in the same
+`notebooks/redshift_plots.ipynb` (not a separate notebook — all the
+loading/labeling/gating logic was already there). Embedding persisted to
+`data/processed/umap_embedding_extended_32feat.npy`. Figures in
+`results/figures/extended_32feat/`; full write-up appended to
+`results/REDSHIFT_PLOTS.md`.
+
+**Findings:**
+
+1. **The zero-non-AGN-redshift finding holds in Variant B too** (8,899 of
+   11,621 gold rows have valid `combo_Z`, and every one of them is AGN —
+   0 of 566 gold non-AGN have one). Confirms the catalog-wide result below
+   isn't an artifact of the Variant A sample specifically.
+2. **Variant B shows the same qualitative redshift gradient as Variant A,
+   but weaker.** Pearson r(UMAP1, `combo_Z`) = 0.462 for Variant B vs.
+   -0.578 for Variant A; r(UMAP2, `combo_Z`) = 0.155 vs. -0.303. **The
+   sign flip on both axes is not meaningful by itself** — UMAP's output
+   orientation (rotation/reflection) is arbitrary per independent fit and
+   carries no physical meaning; only the *magnitude* of the correlation is
+   comparable across two separately-fit embeddings. Reading magnitudes:
+   same primary-axis-dominant pattern, but consistently weaker in both
+   axes for Variant B. The underlying AGN population is nearly identical
+   either way (median z 0.82 vs. 0.77, similar IQR) — this is the same
+   redshift signal expressed less cleanly in UMAP position once 10 extra
+   columns (X-ray/optical/WISE log-fluxes, CSC variability indices) are
+   added, not a different population being plotted.
+3. **Converging cross-analysis result: the 22-feat space is doing as well
+   or better than the 32-feat space on two independent axes.**
+   `results/LABEL_SHAP.md` found near-identical gold-label predictive
+   performance between variants (Variant A AP=0.9941 vs. Variant B
+   AP=0.9947 — a negligible difference, well within noise for this
+   sample-size gap). This redshift-gradient check adds a second,
+   independent signal pointing the same direction: Variant A's embedding
+   organizes by redshift *more* strongly (|r|=0.578/0.303) than Variant
+   B's (|r|=0.462/0.155). Two unrelated analyses (a supervised classifier
+   and an unsupervised embedding) now agree the simpler 22-feat space
+   isn't losing anything by leaving out the 10 extra flux/variability
+   columns — worth remembering before assuming "more features" is
+   automatically an improvement for this catalog.
+
 ## 2026-08-04 — Extinction/reddening correction (Yang 2022 §6) feasibility check
 
 ~10-minute scoping check, written up in

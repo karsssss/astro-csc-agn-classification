@@ -154,3 +154,82 @@ by this catalog's data availability, not by anything in this pipeline --
 obtaining non-AGN redshifts would require a new spectroscopic cross-match
 or survey (this catalog's existing `combo_Z` sources will not produce
 them no matter how the pipeline code is changed).
+
+## Variant B (32-feat) comparison
+
+Added to `notebooks/redshift_plots.ipynb` as additional cells (same
+notebook, same `df` load -- no reload needed) rather than a parallel
+notebook, since all the loading/labeling/gating logic Variant B needs is
+already set up above and there was nothing variant-A-specific to avoid
+duplicating. Feature matrix from
+`build_feature_matrix_with_fluxes_and_variability` (32-feat, per
+`STATE.md` §3), `StandardScaler` + `fit_umap` with the exact same
+defaults as Variant A (`n_neighbors=15, min_dist=0.1, n_components=2,
+random_state=42` -- not tuned or varied). Embedding persisted to
+`data/processed/umap_embedding_extended_32feat.npy` (+ `_index.npy`),
+matching the Variant A naming convention. The Figure-3 (AGN-vs-non-AGN)
+equivalent was skipped here deliberately -- the zero-non-AGN-redshift
+finding above was already verified catalog-wide, not just within the
+Variant A sample, so a Variant B version would only reproduce the same
+point with fewer rows.
+
+### Figures
+
+Saved to `results/figures/extended_32feat/`:
+
+| File | Points | Size |
+|---|---:|---:|
+| `umap_redshift_gold_only.png` | 8,899 | 929,814 bytes |
+| `umap_redshift_agn_only_size.png` | 8,899 | 935,130 bytes |
+
+Both comfortably clear the >20 KB sanity floor. Point counts match the
+pre-task estimate (~8,500-9,000): Variant B's 22,417-row base sample
+(vs. Variant A's 25,801) times the same gold + valid-z filter. As with
+Variant A, the two figures share an identical point count -- confirmed by
+rerunning the same catalog-wide check on the Variant B sample: 0 of 566
+gold non-AGN have a valid `combo_Z`, so "gold with z" and "gold AGN with
+z" are numerically identical here too (8,899 = 8,899).
+
+| | Variant B (32-feat) | Variant A (22-feat), for reference |
+|---|---:|---:|
+| Base sample size | 22,417 | 25,801 |
+| Gold (`label_3class` in `{0,2}`) | 11,621 | 13,115 |
+| Gold AGN (`label_3class`==2) | 11,055 | 12,272 |
+| Gold non-AGN (`label_3class`==0) | 566 | 843 |
+| Gold with valid `combo_Z` | 8,899 | 9,992 |
+| Gold non-AGN with valid `combo_Z` | **0** | **0** |
+
+### Qualitative comparison: structurally similar, weaker gradient
+
+| Diagnostic | Variant B (32-feat) | Variant A (22-feat) |
+|---|---:|---:|
+| Pearson r(UMAP1, `combo_Z`) | 0.462 (p≈0) | -0.578 (p≈0) |
+| Pearson r(UMAP2, `combo_Z`) | 0.155 (p=5.4e-49) | -0.303 (p=9.7e-211) |
+| AGN `combo_Z` median (IQR) | 0.818 (0.346, 1.458) | 0.766 (0.293, 1.419) |
+
+The sign flip on both axes is **not meaningful on its own** -- UMAP's
+output orientation (rotation/reflection) is arbitrary per fit and carries
+no physical meaning; only the magnitude of the correlation is comparable
+across two independently-fit embeddings.
+
+Reading magnitudes: Variant B shows the **same qualitative pattern** as
+Variant A -- a real, non-trivial redshift gradient concentrated mainly
+along one UMAP axis (UMAP1: |r|=0.462) with a weaker secondary-axis
+component (UMAP2: |r|=0.155) -- but **the gradient is noticeably weaker
+in both axes** than Variant A's (|r|=0.578 and |r|=0.303 respectively).
+The underlying AGN population being colored is nearly identical either
+way (median z 0.77-0.82, similar IQR), so this isn't a different
+population being plotted -- it's the same redshift signal expressed less
+strongly in UMAP position once the 10 extra columns (X-ray/optical/WISE
+log-fluxes and CSC variability indices) are added to the feature space.
+Plausible explanation: those additional columns carry information
+uncorrelated with redshift, which dilutes -- without eliminating --
+the redshift-driven structure that dominates more of Variant A's lower-
+dimensional feature space. Not a bug, and not investigated further here
+(out of scope for this additive task) -- worth flagging as a hypothesis
+for whoever next compares the two variants' HDBSCAN cluster structure.
+
+**Bottom line:** structurally similar (same sign-invariant gradient
+direction, same AGN-only redshift coverage, same rough AGN redshift
+distribution), not identical -- Variant B's embedding organizes by
+redshift somewhat less cleanly than Variant A's.
