@@ -198,7 +198,7 @@ non-null coverage (out of 170,196 rows):
 | `SDSS_Z` | 13,888 | 8.16% | raw SDSS spec-z, pre-merge |
 | `SDSS_CALIBFLUX_z` / `_IVAR_z` / `SN_MEDIAN_z` | 18,372 | 10.79% | SDSS z-**band** photometry, not redshift |
 | `AGNDB_Z`, `AGNDB_best_Z`, `AGNDB_phot_Z`, `AGNDB_spec_Z`, `AGNDB_max_phot_Z`, `AGNDB_min_phot_Z`, `AGNDB_p_phot_Z`, `AGNDB_q_Z`, `AGNDB_f_best_Z`, `AGNDB_e_spec_Z`, `` AGNDB_`est_Z `` | 0–12,895 | 0–7.6% | raw AGN-database redshift fields, pre-merge into `combo_Z`; two are fully empty (`AGNDB_e_Z`, `AGNDB_e_phot_Z`) |
-| `Rec_Z` | 27,811 | 16.34% | unclear provenance — not documented in `CLAUDE.md`'s column-naming conventions; flagging rather than guessing what it is |
+| `Rec_Z` | 27,811 | 16.34% | **resolved** (see 2026-08-11 Kim23 merge session) — redundant with `combo_Z`, not a distinct channel: 23,121/27,811 Rec_Z rows also have `combo_Z`, median \|Rec_Z − combo_Z\| on that overlap is 0.0, and 86% of Rec_Z-non-null rows are `agn_positive`/`agn_negative` (AGN-dominated, same as `combo_Z`). Provenance: Kim et al. 2023 CGC (`data/raw/Kim23_CGC.fits`, `src/preprocessing.merge_kim23_galaxies`) — its `z` column, already partially merged into this catalog upstream (not in this repo's git history) before this session added the merge function. |
 
 **Confirmed canonical column: `combo_Z`, gated by `high_quality_z`.**
 `combo_Z` is numeric-non-null for 32,260 rows, of which 31,773 are strictly
@@ -211,8 +211,8 @@ set `build_labels` itself uses for the "high-quality redshift" silver-score
 component (see §2), so it's confirmed as the pipeline's own choice, not
 just my inference.
 
-`Rec_Z` is the one loose end here — I don't know what it is or which
-survey it comes from; not in `CLAUDE.md`'s documented column list.
+`Rec_Z`'s provenance is resolved as of the 2026-08-11 Kim23 merge session —
+see the table row above.
 
 ## 6. Environment sanity (`quant` env)
 
