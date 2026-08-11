@@ -7,6 +7,49 @@ dropped, and why.
 Entries are in reverse chronological order (newest at top). Undated context
 and conventions live in this header.
 
+## 2026-08-11 — Kim23 galaxy-catalog merge landed; extinction/E(B-V) setup parked
+
+**Kim23 merge (`src/preprocessing.merge_kim23_galaxies`, commit `e67d160`).**
+Wrapped Alec's original Kim et al. 2023 Chandra Galaxy Catalog (CGC) merge
+against `data/raw/Kim23_CGC.fits` -- outer join on `name`, per-column
+`combine_first`, plus a proper `galaxy` bool and a `-999` sentinel mask his
+version lacked (see `STATE.md` for the audit). Two findings worth
+remembering:
+
+- **0 new rows.** All 8,547 Kim23 CSCIDs already match an existing catalog
+  `name` -- the outer join is currently a no-op on row count, kept
+  `how="outer"` only for future catalog releases that might have unmatched
+  CSCIDs.
+- **`agn_negative` == the Kim23 galaxy sample.** Every current `agn_negative`
+  row (6,037/6,037) and every `label_conflict` row (2,510/2,510) is
+  `galaxy=True` after the merge -- Kim23 (or an earlier version of it,
+  already reflected in this catalog's pre-existing Rec_Z/WISE coverage) is
+  the source of this catalog's confirmed-non-AGN labels, not an independent
+  signal. Relevant for any AGN-vs-non-AGN work downstream.
+- **`Rec_Z` resolved**, see `STATE.md` §5: redundant with `combo_Z` (median
+  |diff| 0.0 on 23,121/27,811 overlap rows, 86% AGN-dominated), not a
+  distinct galaxy-redshift channel as originally guessed.
+
+Feature matrices/clustering/SHAP not re-run this session -- galaxy rows
+deliberately not forced into the 22/32-feat reduced-case pipeline (they lack
+Gaia/most X-ray bands and won't survive its dropna).
+
+**Extinction/E(B-V) setup: parked, not abandoned.** `dustmaps` hard-requires
+`healpy` even for the SFD-only path (`dustmaps/map_base.py` imports it
+unconditionally), and `healpy` has no pip-installable wheel on native
+Windows -- its source build fails compiling the C extension. Tried routing
+around it via `conda install -c conda-forge healpy` (conda-forge does
+publish win-64 builds), but the install was abandoned mid-run at the user's
+request rather than prioritized this session. Next attempt should go
+through `sfdmap2` instead -- a pure numpy/astropy SFD-only reader with no
+`healpy` dependency, already noted as an alternative in
+`references/notes/extinction_feasibility.md`.
+
+**Cleanup owed:** `quant` currently has a half-installed, non-functional
+`dustmaps` (installed via `pip install dustmaps --no-deps`, so
+`import dustmaps.sfd` still fails on the missing `healpy`). Uninstall it
+next session before retrying via `sfdmap2`.
+
 ## 2026-08-04 — Redshift-coded UMAP plots, Variant B (32-feat) addendum
 
 Additive follow-up to the Variant A redshift plots below: the same two
